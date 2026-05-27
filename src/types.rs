@@ -180,6 +180,12 @@ pub enum DataKey {
     VoucherStats(Address),
     /// Withdrawal queue: borrower → Vec<QueuedWithdrawal>
     WithdrawalQueue(Address),
+    /// Issue #632: cross-chain bridge validation record: (voucher, chain_id) → bool
+    BridgeValidated(Address, u32),
+    /// Issue #635: vouch snapshot at ledger sequence height for governance voting.
+    /// height → Vec<(borrower, Vec<VouchRecord>)> stored as raw bytes via manual encoding,
+    /// but we store total_stake per borrower for simplicity: height → Vec<VouchSnapshotEntry>
+    VouchSnapshot(u32),
 }
 
 // ── Governance ────────────────────────────────────────────────────────────────
@@ -231,6 +237,9 @@ pub struct Config {
     /// Prepayment penalty in basis points (e.g. 100 = 1%). Applied to remaining principal
     /// when a borrower repays early. 0 means no penalty.
     pub prepayment_penalty_bps: u32,
+    /// Issue #634: Liquidity mining reward rate in basis points (e.g. 50 = 0.5%).
+    /// Paid to vouchers on top of normal yield for maintaining stakes.
+    pub liquidity_mining_rate_bps: i128,
 }
 
 // ── Data Types ────────────────────────────────────────────────────────────────
@@ -303,6 +312,8 @@ pub struct VouchRecord {
     pub expiry_timestamp: Option<u64>,
     /// Optional delegate address; if set, this address can manage the vouch.
     pub delegate: Option<Address>,
+    /// Chain ID for cross-chain vouching support (0 = native Stellar, non-zero = bridged chain).
+    pub chain_id: u32,
 }
 
 #[contracttype]
@@ -458,6 +469,20 @@ pub struct VoucherStats {
     pub total_yield_earned: i128,
     /// Cumulative stake amount slashed across all defaults, in stroops.
     pub total_slashed: i128,
+}
+
+// ── Issue #635: Vouch Snapshot ────────────────────────────────────────────────
+
+/// A single entry in a governance vouch snapshot.
+#[contracttype]
+#[derive(Clone)]
+pub struct VouchSnapshotEntry {
+    /// The borrower whose vouches are snapshotted.
+    pub borrower: Address,
+    /// Total stake vouched for this borrower at snapshot time, in stroops.
+    pub total_stake: i128,
+    /// Number of active vouchers at snapshot time.
+    pub voucher_count: u32,
 }
 
 // ── Pause Mode ────────────────────────────────────────────────────────────────

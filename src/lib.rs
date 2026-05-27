@@ -12,9 +12,9 @@ use soroban_sdk::{contract, contractimpl, symbol_short, token, Address, Env, Str
 mod withdrawal_queue_test;
 
 use crate::errors::ContractError;
-use crate::helpers::{config, get_active_loan_record, has_active_loan, require_allowed_token, require_not_paused};
+use crate::helpers::{config, get_active_loan_record, has_active_loan, require_allowed_token, require_not_paused, require_admin_approval};
 use crate::types::{
-    Config, DataKey, LoanRecord, LoanStatus, QueuedWithdrawal, VouchRecord,
+    Config, DataKey, LoanRecord, LoanStatus, QueuedWithdrawal, VouchRecord, VouchSnapshotEntry,
     DEFAULT_LOAN_DURATION, DEFAULT_MAX_LOAN_TO_STAKE_RATIO, DEFAULT_MAX_VOUCHERS,
     DEFAULT_MIN_LOAN_AMOUNT, DEFAULT_MIN_VOUCH_AGE_SECS, DEFAULT_SLASH_BPS, DEFAULT_YIELD_BPS,
 };
@@ -62,6 +62,7 @@ impl QuorumCreditContract {
                 grace_period: 0,
                 min_vouch_age_secs: DEFAULT_MIN_VOUCH_AGE_SECS,
                 prepayment_penalty_bps: 0,
+                liquidity_mining_rate_bps: 0,
             },
         );
 
@@ -80,6 +81,35 @@ impl QuorumCreditContract {
         token: Address,
     ) -> Result<(), ContractError> {
         vouch::vouch(env, voucher, borrower, stake, token)
+    }
+
+    /// Issue #632: Vouch with cross-chain support.
+    /// chain_id=0 is native Stellar; non-zero requires prior bridge validation.
+    pub fn vouch_cross_chain(
+        env: Env,
+        voucher: Address,
+        borrower: Address,
+        stake: i128,
+        token: Address,
+        chain_id: u32,
+    ) -> Result<(), ContractError> {
+        vouch::vouch_cross_chain(env, voucher, borrower, stake, token, chain_id)
+    }
+
+    /// Issue #632: Admin sets bridge validation status for a voucher on a given chain.
+    pub fn set_bridge_validated(
+        env: Env,
+        admin_signers: Vec<Address>,
+        voucher: Address,
+        chain_id: u32,
+        validated: bool,
+    ) -> Result<(), ContractError> {
+        vouch::set_bridge_validated(env, admin_signers, voucher, chain_id, validated)
+    }
+
+    /// Issue #632: Query bridge validation status.
+    pub fn is_bridge_validated(env: Env, voucher: Address, chain_id: u32) -> bool {
+        vouch::is_bridge_validated(env, voucher, chain_id)
     }
 
     pub fn batch_vouch(
@@ -288,15 +318,37 @@ impl QuorumCreditContract {
                 if v.token != loan.token_address {
                     continue;
                 }
-                let yield_share = if total_stake > 0 {
+                // Issue #633: Yield tiering — vouch age bonus.
+                // Vouches older than 30 days get +50% of their yield share.
+                // Vouches older than 7 days get +25% of their yield share.
+                let vouch_age_secs = loan.disbursement_timestamp.saturating_sub(v.vouch_timestamp);
+                let age_multiplier_bps: i128 = if vouch_age_secs >= 30 * 24 * 60 * 60 {
+                    15_000 // 150%
+                } else if vouch_age_secs >= 7 * 24 * 60 * 60 {
+                    12_500 // 125%
+                } else {
+                    10_000 // 100% base
+                };
+
+                let base_yield_share = if total_stake > 0 {
                     loan.total_yield * v.stake / total_stake
                 } else {
                     0
                 };
+                let tiered_yield = base_yield_share * age_multiplier_bps / 10_000;
+
+                // Issue #634: Liquidity mining reward on top of yield.
+                let cfg = config(&env);
+                let mining_reward = if cfg.liquidity_mining_rate_bps > 0 {
+                    v.stake * cfg.liquidity_mining_rate_bps / 10_000
+                } else {
+                    0
+                };
+
                 token_client.transfer(
                     &env.current_contract_address(),
                     &v.voucher,
-                    &(v.stake + yield_share),
+                    &(v.stake + tiered_yield + mining_reward),
                 );
             }
 
@@ -345,5 +397,75 @@ impl QuorumCreditContract {
             .get(&DataKey::Vouches(borrower))
             .unwrap_or(Vec::new(&env));
         vouches.iter().any(|v| v.voucher == voucher)
+    }
+
+    // ─────────────────────────────────────────────
+    // Issue #634: Liquidity Mining Config
+    // ─────────────────────────────────────────────
+
+    /// Set the liquidity mining reward rate. Requires admin approval.
+    pub fn set_liquidity_mining_rate(
+        env: Env,
+        admin_signers: Vec<Address>,
+        rate_bps: i128,
+    ) -> Result<(), ContractError> {
+        require_admin_approval(&env, &admin_signers)?;
+        if rate_bps < 0 || rate_bps > 10_000 {
+            return Err(ContractError::InvalidAmount);
+        }
+        let mut cfg = config(&env);
+        cfg.liquidity_mining_rate_bps = rate_bps;
+        env.storage().instance().set(&DataKey::Config, &cfg);
+        Ok(())
+    }
+
+    pub fn get_liquidity_mining_rate(env: Env) -> i128 {
+        config(&env).liquidity_mining_rate_bps
+    }
+
+    // ─────────────────────────────────────────────
+    // Issue #635: Vouch Snapshot for Governance
+    // ─────────────────────────────────────────────
+
+    /// Take a snapshot of all active borrower vouch totals at the current ledger sequence.
+    /// Stores under DataKey::VouchSnapshot(ledger_sequence).
+    pub fn take_vouch_snapshot(
+        env: Env,
+        admin_signers: Vec<Address>,
+        borrowers: Vec<Address>,
+    ) -> Result<u32, ContractError> {
+        require_admin_approval(&env, &admin_signers)?;
+        let height = env.ledger().sequence();
+        let mut entries: Vec<VouchSnapshotEntry> = Vec::new(&env);
+        for borrower in borrowers.iter() {
+            let vouches: Vec<VouchRecord> = env
+                .storage()
+                .persistent()
+                .get(&DataKey::Vouches(borrower.clone()))
+                .unwrap_or(Vec::new(&env));
+            let total_stake: i128 = vouches.iter().map(|v| v.stake).sum();
+            let voucher_count = vouches.len();
+            entries.push_back(VouchSnapshotEntry {
+                borrower,
+                total_stake,
+                voucher_count,
+            });
+        }
+        env.storage()
+            .persistent()
+            .set(&DataKey::VouchSnapshot(height), &entries);
+        env.events().publish(
+            (symbol_short!("snap"), symbol_short!("taken")),
+            height,
+        );
+        Ok(height)
+    }
+
+    /// Retrieve a previously taken vouch snapshot by ledger sequence height.
+    pub fn get_vouch_snapshot(env: Env, height: u32) -> Vec<VouchSnapshotEntry> {
+        env.storage()
+            .persistent()
+            .get(&DataKey::VouchSnapshot(height))
+            .unwrap_or(Vec::new(&env))
     }
 }
