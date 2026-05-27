@@ -59,6 +59,7 @@ impl QuorumCreditContract {
                 grace_period: 0,
                 min_vouch_age_secs: DEFAULT_MIN_VOUCH_AGE_SECS,
                 prepayment_penalty_bps: 0,
+                acceleration_triggers: Vec::new(&env),
             },
         );
 
@@ -1478,6 +1479,13 @@ impl QuorumCreditContract {
     /// Limited to `MAX_DEFERMENT_PERIODS` (3) per loan.
     pub fn defer_payment(env: Env, borrower: Address) -> Result<(), ContractError> {
         loan::defer_payment(env, borrower)
+    }
+
+    /// Check if a borrower's active loan should be accelerated based on their default count
+    /// against `Config.acceleration_triggers`. Sets deadline to now if triggered.
+    /// Returns `LoanAccelerated` if a trigger condition is met.
+    pub fn check_acceleration(env: Env, borrower: Address) -> Result<(), ContractError> {
+        loan::check_acceleration(env, borrower)
     }
 
     /// Request a loan extension. Requires voucher approval.

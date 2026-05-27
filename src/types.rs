@@ -237,6 +237,10 @@ pub struct Config {
     /// Prepayment penalty in basis points (e.g. 100 = 1%). Applied to remaining principal
     /// when a borrower repays early. 0 means no penalty.
     pub prepayment_penalty_bps: u32,
+    /// Conditions that trigger automatic loan acceleration (immediate full repayment due).
+    /// Each entry is a threshold: if the borrower's default_count reaches or exceeds this
+    /// value, the loan is accelerated.
+    pub acceleration_triggers: Vec<u32>,
 }
 
 // ── Data Types ────────────────────────────────────────────────────────────────

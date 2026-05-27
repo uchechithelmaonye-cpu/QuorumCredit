@@ -349,3 +349,44 @@ pub fn defer_payment(env: Env, borrower: Address) -> Result<(), ContractError> {
 
     Ok(())
 }
+
+/// Check whether a borrower's loan should be accelerated based on their default count
+/// against the configured `acceleration_triggers`. If any trigger threshold is met,
+/// the loan deadline is set to the current timestamp (immediately due) and an event
+/// is emitted. Returns `LoanAccelerated` if triggered.
+pub fn check_acceleration(env: Env, borrower: Address) -> Result<(), ContractError> {
+    require_not_paused(&env)?;
+
+    let cfg = config(&env);
+    if cfg.acceleration_triggers.is_empty() {
+        return Ok(());
+    }
+
+    let default_count: u32 = env
+        .storage()
+        .persistent()
+        .get(&DataKey::DefaultCount(borrower.clone()))
+        .unwrap_or(0);
+
+    let triggered = cfg
+        .acceleration_triggers
+        .iter()
+        .any(|threshold| default_count >= threshold);
+
+    if !triggered {
+        return Ok(());
+    }
+
+    let mut loan = get_active_loan_record(&env, &borrower)?;
+    let now = env.ledger().timestamp();
+    loan.deadline = now;
+
+    env.storage().persistent().set(&DataKey::Loan(loan.id), &loan);
+
+    env.events().publish(
+        (symbol_short!(\"loan\"), symbol_short!(\"accel\")),
+        (borrower, default_count),
+    );
+
+    Err(ContractError::LoanAccelerated)
+}

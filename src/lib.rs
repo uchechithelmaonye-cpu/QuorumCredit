@@ -62,6 +62,7 @@ impl QuorumCreditContract {
                 grace_period: 0,
                 min_vouch_age_secs: DEFAULT_MIN_VOUCH_AGE_SECS,
                 prepayment_penalty_bps: 0,
+                acceleration_triggers: Vec::new(&env),
             },
         );
 
