@@ -57,12 +57,14 @@ pub enum ContractError {
     WithdrawalNotQueued = 47,
     /// Partial withdrawal amount exceeds the 50% cap.
     PartialWithdrawalExceedsCap = 48,
-    /// Borrower is within the slash immunity period.
-    BorrowerImmune = 49,
-    /// Slash record not found.
-    SlashRecordNotFound = 50,
-    /// Slash has already been reversed.
-    SlashAlreadyReversed = 51,
-    /// Loan was already fully repaid before slash recovery.
-    AlreadyRepaid = 52,
+    /// Borrower was slashed too recently; slash cooldown is still active.
+    SlashCooldownActive = 49,
+    /// Caller is not an admin or protocol-token holder allowed to govern.
+    NotGovernanceParticipant = 50,
+    /// Governance action is not allowed after the voting period has ended.
+    VotingPeriodEnded = 51,
+    /// Governance proposal was not found.
+    ProposalNotFound = 52,
+    /// Governance proposal was already finalized.
+    ProposalAlreadyFinalized = 53,
 }

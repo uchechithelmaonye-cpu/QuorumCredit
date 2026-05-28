@@ -1,5 +1,5 @@
 use crate::errors::ContractError;
-use crate::types::{Config, DataKey, LoanRecord};
+use crate::types::{Config, DataKey, LoanRecord, LoanStatus};
 use soroban_sdk::{token, Address, Env, String, Vec};
 
 pub fn require_not_paused(env: &Env) -> Result<(), ContractError> {
@@ -9,10 +9,13 @@ pub fn require_not_paused(env: &Env) -> Result<(), ContractError> {
         .get(&DataKey::Paused)
         .unwrap_or(false);
     if paused {
-        Err(ContractError::ContractPaused)
-    } else {
-        Ok(())
+        return Err(ContractError::ContractPaused);
     }
+    let cfg = config(env);
+    if cfg.emergency_pause_enabled {
+        return Err(ContractError::ContractPaused);
+    }
+    Ok(())
 }
 
 pub fn require_positive_amount(_env: &Env, amount: i128) -> Result<(), ContractError> {
@@ -29,39 +32,14 @@ pub fn config(env: &Env) -> Config {
         .expect("not initialized")
 }
 
-pub fn add_slash_balance(env: &Env, amount: i128) {
-    if amount <= 0 {
-        return;
-    }
-    let current: i128 = env
-        .storage()
-        .instance()
-        .get(&DataKey::SlashTreasury)
-        .unwrap_or(0);
-    env.storage()
-        .instance()
-        .set(&DataKey::SlashTreasury, &(current + amount));
-}
-
-pub fn deduct_slash_balance(env: &Env, amount: i128) -> Result<(), ContractError> {
-    let current: i128 = env
-        .storage()
-        .instance()
-        .get(&DataKey::SlashTreasury)
-        .unwrap_or(0);
-    if current < amount {
-        return Err(ContractError::InsufficientFunds);
-    }
-    env.storage()
-        .instance()
-        .set(&DataKey::SlashTreasury, &(current - amount));
-    Ok(())
+pub fn get_admins(env: &Env) -> Vec<Address> {
+    config(env).admins
 }
 
 pub fn has_active_loan(env: &Env, borrower: &Address) -> bool {
     matches!(
         get_active_loan_record(env, borrower),
-        Ok(loan) if loan.status == crate::types::LoanStatus::Active
+        Ok(loan) if loan.status == LoanStatus::Active
     )
 }
 
@@ -84,8 +62,6 @@ pub fn get_latest_loan_record(env: &Env, borrower: &Address) -> Option<LoanRecor
         .get(&DataKey::LatestLoan(borrower.clone()))
     {
         env.storage().persistent().get(&DataKey::Loan(loan_id))
-    } else if let Ok(loan) = get_active_loan_record(env, borrower) {
-        Some(loan)
     } else {
         None
     }
@@ -105,36 +81,15 @@ pub fn next_loan_id(env: &Env) -> u64 {
     loan_id
 }
 
-pub fn register_borrower_if_needed(env: &Env, borrower: &Address) {
-    if !env
+pub fn add_slash_balance(env: &Env, amount: i128) {
+    let current: i128 = env
         .storage()
-        .persistent()
-        .has(&DataKey::BorrowerRegistered(borrower.clone()))
-    {
-        env.storage().persistent().set(
-            &DataKey::BorrowerRegistered(borrower.clone()),
-            &env.ledger().timestamp(),
-        );
-    }
-}
-
-pub fn borrower_registration_time(env: &Env, borrower: &Address) -> u64 {
+        .instance()
+        .get(&DataKey::SlashTreasury)
+        .unwrap_or(0);
     env.storage()
-        .persistent()
-        .get(&DataKey::BorrowerRegistered(borrower.clone()))
-        .unwrap_or(0)
-}
-
-pub fn require_allowed_token<'a>(
-    env: &'a Env,
-    addr: &Address,
-) -> Result<token::Client<'a>, ContractError> {
-    let cfg = config(env);
-    if *addr == cfg.token || cfg.allowed_tokens.iter().any(|t| t == *addr) {
-        Ok(token::Client::new(env, addr))
-    } else {
-        Err(ContractError::InvalidToken)
-    }
+        .instance()
+        .set(&DataKey::SlashTreasury, &(current + amount));
 }
 
 pub fn is_zero_address(env: &Env, addr: &Address) -> bool {
@@ -172,15 +127,20 @@ pub fn validate_admin_config(
     admins: &Vec<Address>,
     admin_threshold: u32,
 ) -> Result<(), ContractError> {
-    if admins.is_empty() || admin_threshold == 0 || admin_threshold > admins.len() {
+    if admins.is_empty() {
         return Err(ContractError::InvalidAdminThreshold);
     }
-    for i in 0..admins.len() {
+    if admin_threshold == 0 || admin_threshold > admins.len() {
+        return Err(ContractError::InvalidAdminThreshold);
+    }
+    let admin_count = admins.len();
+    for i in 0..admin_count {
         let admin = admins.get(i).unwrap();
         require_valid_address(env, &admin)?;
         for j in 0..i {
-            if admin == admins.get(j).unwrap() {
-                panic!("duplicate admin");
+            let prior_admin = admins.get(j).unwrap();
+            if admin == prior_admin {
+                return Err(ContractError::InvalidAdminThreshold);
             }
         }
     }
@@ -202,19 +162,46 @@ pub fn require_admin_approval(env: &Env, admin_signers: &Vec<Address>) {
     }
 }
 
-pub fn validate_config_bps(config: &Config) -> bool {
-    config.recovery_percentage <= 10_000
+pub fn is_admin(env: &Env, addr: &Address) -> bool {
+    config(env).admins.iter().any(|a| a == *addr)
 }
 
-pub fn get_admins(env: &Env) -> Vec<Address> {
-    config(env).admins
+/// Governance participant: registered admin or holder of the protocol token.
+pub fn is_governance_participant(env: &Env, addr: &Address) -> bool {
+    if is_admin(env, addr) {
+        return true;
+    }
+    let cfg = config(env);
+    let token = token::Client::new(env, &cfg.token);
+    token.balance(addr) > 0
 }
 
-pub fn token_client(env: &Env) -> soroban_sdk::token::Client<'_> {
-    let addr = config(env).token;
-    soroban_sdk::token::Client::new(env, &addr)
+pub fn require_governance_participant(env: &Env, addr: &Address) -> Result<(), ContractError> {
+    if is_governance_participant(env, addr) {
+        Ok(())
+    } else {
+        Err(ContractError::NotGovernanceParticipant)
+    }
 }
 
-pub fn token(env: &Env) -> soroban_sdk::token::Client<'_> {
-    token_client(env)
+pub fn require_allowed_token<'a>(
+    env: &'a Env,
+    addr: &Address,
+) -> Result<token::Client<'a>, ContractError> {
+    let cfg = config(env);
+    if *addr == cfg.token || cfg.allowed_tokens.iter().any(|t| t == *addr) {
+        Ok(token::Client::new(env, addr))
+    } else {
+        Err(ContractError::InvalidToken)
+    }
+}
+
+pub fn loan_status(env: &Env, borrower: &Address) -> LoanStatus {
+    if let Ok(loan) = get_active_loan_record(env, borrower) {
+        return loan.status;
+    }
+    if let Some(loan) = get_latest_loan_record(env, borrower) {
+        return loan.status;
+    }
+    LoanStatus::None
 }
