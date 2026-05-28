@@ -57,14 +57,14 @@ pub enum ContractError {
     WithdrawalNotQueued = 47,
     /// Partial withdrawal amount exceeds the 50% cap.
     PartialWithdrawalExceedsCap = 48,
-    /// #667: Caller is not the registered oracle.
-    OracleUnauthorized = 49,
-    /// #667: Credit score value is out of the valid range (0–1000).
-    InvalidCreditScore = 50,
-    /// #666: Repayment is pending oracle verification; cannot release yet.
-    EscrowPending = 51,
-    /// #666: No repayment is currently held in escrow for this borrower.
-    NoEscrowFound = 52,
-    /// #669: Maximum retry attempts exceeded.
-    MaxRetriesExceeded = 53,
+    /// Borrower was slashed too recently; slash cooldown is still active.
+    SlashCooldownActive = 49,
+    /// Caller is not an admin or protocol-token holder allowed to govern.
+    NotGovernanceParticipant = 50,
+    /// Governance action is not allowed after the voting period has ended.
+    VotingPeriodEnded = 51,
+    /// Governance proposal was not found.
+    ProposalNotFound = 52,
+    /// Governance proposal was already finalized.
+    ProposalAlreadyFinalized = 53,
 }
