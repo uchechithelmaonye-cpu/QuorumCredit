@@ -292,6 +292,14 @@ pub enum DataKey {
     VoucherInsurance(Address, Address),
     /// Cross-chain bridge validation status: (voucher, chain_id) → bool.
     BridgeValidated(Address, u32),
+    /// Issue #687: admin removal proposal id → AdminRemovalProposal
+    AdminRemovalProposal(u64),
+    /// Issue #687: monotonically increasing admin removal proposal counter
+    AdminRemovalProposalCounter,
+    /// Issue #686: accumulated admin compensation pool balance (i128 stroops)
+    AdminCompensation,
+    /// Issue #686: last compensation claim timestamp per admin address
+    AdminLastClaim(Address),
 }
 
 // ── Governance ────────────────────────────────────────────────────────────────
@@ -390,6 +398,28 @@ pub struct Config {
     pub oracle_address: Option<soroban_sdk::Address>,
     /// Delay (in seconds) after a slash vote reaches quorum before it can be executed (0 = immediate).
     pub slash_delay_seconds: u64,
+    /// When true, each repayment must be preceded by a `confirm_repayment` call from the borrower.
+    pub confirmation_required: bool,
+    /// Controls where redistributable slash funds flow after insurance allocation.
+    pub redistribution_rule: RedistributionRule,
+    /// Fraction of slash proceeds returned to the borrower on full repayment, in basis points.
+    pub recovery_percentage: u32,
+    /// Seconds a borrower is immune from re-slashing after a reversal (0 = no immunity).
+    pub immunity_period_seconds: u64,
+    /// Protocol fee charged on disbursement and routed to the insurance pool, in basis points.
+    pub insurance_premium_bps: u32,
+    /// When true, the slash threshold adjusts dynamically based on protocol health.
+    pub dynamic_slash_threshold: bool,
+    /// When true, slash penalty scales linearly with loan size relative to total staked collateral.
+    pub loan_size_slash_enabled: bool,
+    /// Maximum slash rate applied to the largest loans when loan-size scaling is enabled, in bps.
+    pub loan_size_slash_max_bps: i128,
+    /// Issue #687: Minimum number of governance votes required to remove a compromised admin.
+    /// 0 means governance removal is disabled (admins can only be removed via multi-sig).
+    pub removal_vote_threshold: u32,
+    /// Issue #686: Fraction of the admin compensation pool each admin earns per epoch, in bps.
+    /// 0 means admin compensation is disabled.
+    pub admin_compensation_bps: u32,
 }
 
 // ── Data Types ────────────────────────────────────────────────────────────────
@@ -676,6 +706,28 @@ pub struct AdminActionProposal {
     pub approvals: Vec<Address>,
     pub created_at: u64,
     pub executed: bool,
+}
+
+/// Issue #687: Governance proposal to remove a compromised admin address.
+/// Passes when `approve_votes >= Config.removal_vote_threshold`.
+#[contracttype]
+#[derive(Clone)]
+pub struct AdminRemovalProposal {
+    pub id: u64,
+    /// Admin address to be removed if the proposal passes.
+    pub admin_to_remove: Address,
+    /// Address that created the proposal (must be a governance participant).
+    pub proposer: Address,
+    /// Number of approve votes cast so far.
+    pub approve_votes: u32,
+    /// Number of reject votes cast so far.
+    pub reject_votes: u32,
+    /// Addresses that have already voted (prevent double-voting).
+    pub voters: Vec<Address>,
+    /// Ledger timestamp when the proposal was created.
+    pub proposed_at: u64,
+    /// True once the proposal has been finalized (admin removed or rejected).
+    pub finalized: bool,
 }
 
 // ── Pagination ────────────────────────────────────────────────────────────────

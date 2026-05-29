@@ -82,6 +82,16 @@ impl QuorumCreditContract {
                 early_repayment_discount_bps: 0,
                 oracle_address: None,
                 slash_delay_seconds: 0,
+                confirmation_required: DEFAULT_CONFIRMATION_REQUIRED,
+                redistribution_rule: RedistributionRule::Treasury,
+                recovery_percentage: 0,
+                immunity_period_seconds: 0,
+                insurance_premium_bps: 0,
+                dynamic_slash_threshold: DEFAULT_DYNAMIC_SLASH_THRESHOLD,
+                loan_size_slash_enabled: DEFAULT_LOAN_SIZE_SLASH_ENABLED,
+                loan_size_slash_max_bps: DEFAULT_LOAN_SIZE_SLASH_MAX_BPS,
+                removal_vote_threshold: 0,
+                admin_compensation_bps: 0,
             },
         );
 

@@ -972,3 +972,161 @@ pub fn set_confirmation_required(
         (admin_signers.get(0).unwrap(), enabled, env.ledger().timestamp()),
     );
 }
+
+// ── Issue #686: Admin compensation ───────────────────────────────────────────
+
+/// Set the admin compensation rate.
+///
+/// `compensation_bps` is the fraction of the admin compensation pool that is
+/// distributed across all admins each time `claim_admin_compensation` is called.
+/// Must be in range [0, 10000]. 0 disables compensation.
+pub fn set_admin_compensation_bps(
+    env: Env,
+    admin_signers: Vec<Address>,
+    compensation_bps: u32,
+) {
+    require_admin_approval(&env, &admin_signers);
+    if compensation_bps > 10_000 {
+        panic_with_error!(&env, ContractError::InvalidBps);
+    }
+
+    let mut cfg = config(&env);
+    cfg.admin_compensation_bps = compensation_bps;
+    env.storage().instance().set(&DataKey::Config, &cfg);
+
+    env.events().publish(
+        (symbol_short!("admin"), symbol_short!("cmp_bps")),
+        (admin_signers.get(0).unwrap(), compensation_bps, env.ledger().timestamp()),
+    );
+}
+
+/// Add funds to the admin compensation pool.
+///
+/// Anyone may call this to top up the pool (e.g. from protocol revenues).
+/// The caller must hold at least `amount` tokens and authorize the transfer.
+pub fn fund_admin_compensation(
+    env: Env,
+    funder: Address,
+    amount: i128,
+) -> Result<(), ContractError> {
+    funder.require_auth();
+    if amount <= 0 {
+        panic_with_error!(&env, ContractError::InvalidAmount);
+    }
+
+    let cfg = config(&env);
+    soroban_sdk::token::Client::new(&env, &cfg.token)
+        .transfer(&funder, &env.current_contract_address(), &amount);
+
+    let pool: i128 = env
+        .storage()
+        .instance()
+        .get(&DataKey::AdminCompensation)
+        .unwrap_or(0i128);
+    env.storage()
+        .instance()
+        .set(&DataKey::AdminCompensation, &(pool + amount));
+
+    env.events().publish(
+        (symbol_short!("admin"), symbol_short!("cmp_fund")),
+        (funder, amount, env.ledger().timestamp()),
+    );
+
+    Ok(())
+}
+
+/// Claim admin compensation.
+///
+/// Each admin receives an equal pro-rata share of
+/// `pool_balance * admin_compensation_bps / 10_000` split across all admins.
+/// No more than once per 24 hours per admin (enforced via `AdminLastClaim`).
+pub fn claim_admin_compensation(env: Env, admin: Address) -> Result<i128, ContractError> {
+    admin.require_auth();
+
+    if !is_admin(&env, &admin) {
+        return Err(ContractError::UnauthorizedCaller);
+    }
+
+    let cfg = config(&env);
+    if cfg.admin_compensation_bps == 0 {
+        return Err(ContractError::InvalidAmount);
+    }
+
+    let now = env.ledger().timestamp();
+    if let Some(last_claim) = env
+        .storage()
+        .instance()
+        .get::<DataKey, u64>(&DataKey::AdminLastClaim(admin.clone()))
+    {
+        if now.saturating_sub(last_claim) < 24 * 60 * 60 {
+            return Err(ContractError::VouchCooldownActive);
+        }
+    }
+
+    let pool: i128 = env
+        .storage()
+        .instance()
+        .get(&DataKey::AdminCompensation)
+        .unwrap_or(0i128);
+
+    if pool == 0 {
+        return Err(ContractError::InsufficientFunds);
+    }
+
+    let num_admins = cfg.admins.len() as i128;
+    let total_payout = pool * cfg.admin_compensation_bps as i128 / 10_000;
+    let share = total_payout / num_admins;
+
+    if share <= 0 {
+        return Err(ContractError::InsufficientFunds);
+    }
+
+    let new_pool = pool - share;
+    env.storage()
+        .instance()
+        .set(&DataKey::AdminCompensation, &new_pool);
+    env.storage()
+        .instance()
+        .set(&DataKey::AdminLastClaim(admin.clone()), &now);
+
+    soroban_sdk::token::Client::new(&env, &cfg.token)
+        .transfer(&env.current_contract_address(), &admin, &share);
+
+    env.events().publish(
+        (symbol_short!("admin"), symbol_short!("cmp_clm")),
+        (admin, share, env.ledger().timestamp()),
+    );
+
+    Ok(share)
+}
+
+/// Return the current admin compensation rate in basis points.
+pub fn get_admin_compensation_bps(env: Env) -> u32 {
+    config(&env).admin_compensation_bps
+}
+
+/// Return the current balance of the admin compensation pool, in stroops.
+pub fn get_admin_compensation_pool(env: Env) -> i128 {
+    env.storage()
+        .instance()
+        .get(&DataKey::AdminCompensation)
+        .unwrap_or(0i128)
+}
+
+/// Set the governance removal vote threshold for admin removal (#687).
+pub fn set_removal_vote_threshold(
+    env: Env,
+    admin_signers: Vec<Address>,
+    threshold: u32,
+) {
+    require_admin_approval(&env, &admin_signers);
+
+    let mut cfg = config(&env);
+    cfg.removal_vote_threshold = threshold;
+    env.storage().instance().set(&DataKey::Config, &cfg);
+
+    env.events().publish(
+        (symbol_short!("admin"), symbol_short!("rmv_thr")),
+        (admin_signers.get(0).unwrap(), threshold, env.ledger().timestamp()),
+    );
+}
