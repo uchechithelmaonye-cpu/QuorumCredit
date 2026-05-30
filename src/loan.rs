@@ -78,6 +78,8 @@ pub fn request_loan(
 ) -> Result<(), ContractError> {
     borrower.require_auth();
     require_not_paused(&env)?;
+    crate::helpers::check_rate_limit(&env, &borrower)?;
+    crate::helpers::check_permission(&env, &borrower, |p| p.can_request_loan)?;
     register_borrower_if_needed(&env, &borrower);
 
     if has_active_loan(&env, &borrower) {
@@ -231,6 +233,8 @@ pub fn apply_slash_recovery(env: &Env, borrower: &Address) -> Result<(), Contrac
 pub fn repay(env: Env, borrower: Address, payment: i128) -> Result<(), ContractError> {
     borrower.require_auth();
     require_not_paused(&env)?;
+    crate::helpers::check_rate_limit(&env, &borrower)?;
+    crate::helpers::check_permission(&env, &borrower, |p| p.can_repay)?;
 
      let mut loan = match get_active_loan_record(&env, &borrower) {
          Ok(l) => l,
@@ -260,8 +264,8 @@ pub fn repay(env: Env, borrower: Address, payment: i128) -> Result<(), ContractE
         panic_with_error!(&env, ContractError::InvalidAmount);
     }
 
-    let total_owed = loan.amount + loan.total_yield;
-    let outstanding = total_owed - loan.amount_repaid;
+    let total_owed = loan.amount.checked_add(loan.total_yield).ok_or(ContractError::ArithmeticError)?;
+    let outstanding = total_owed.checked_sub(loan.amount_repaid).ok_or(ContractError::ArithmeticError)?;
 
     if payment > outstanding {
         panic_with_error!(&env, ContractError::InvalidAmount);
@@ -270,16 +274,16 @@ pub fn repay(env: Env, borrower: Address, payment: i128) -> Result<(), ContractE
     let token = require_allowed_token(&env, &loan.token_address)?;
     token.transfer(&borrower, &env.current_contract_address(), &payment);
 
-    loan.amount_repaid += payment;
+    loan.amount_repaid = loan.amount_repaid.checked_add(payment).ok_or(ContractError::ArithmeticError)?;
 
     let now = env.ledger().timestamp();
     let cfg = config(&env);
 
     let mut penalty: i128 = 0;
     if !was_defaulted && now < loan.deadline && cfg.prepayment_penalty_bps > 0 {
-        let remaining_principal =
-            loan.amount - (loan.amount_repaid * loan.amount / total_owed);
-        penalty = remaining_principal * cfg.prepayment_penalty_bps as i128 / BPS_DENOMINATOR;
+        let repaid_principal = loan.amount_repaid.checked_mul(loan.amount).ok_or(ContractError::ArithmeticError)? / total_owed;
+        let remaining_principal = loan.amount.checked_sub(repaid_principal).ok_or(ContractError::ArithmeticError)?;
+        penalty = remaining_principal.checked_mul(cfg.prepayment_penalty_bps as i128).ok_or(ContractError::ArithmeticError)? / BPS_DENOMINATOR;
     }
 
     let fully_repaid = loan.amount_repaid >= total_owed;
@@ -422,6 +426,8 @@ pub fn repay_partial(
 ) -> Result<(), ContractError> {
     borrower.require_auth();
     require_not_paused(&env)?;
+    crate::helpers::check_rate_limit(&env, &borrower)?;
+    crate::helpers::check_permission(&env, &borrower, |p| p.can_repay)?;
 
     let mut loan = get_active_loan_record(&env, &borrower)?;
 
@@ -434,7 +440,7 @@ pub fn repay_partial(
     // FIX: transfer should be FROM borrower TO contract
     token_client.transfer(&borrower, &env.current_contract_address(), &payment);
 
-    loan.amount_repaid += payment;
+    loan.amount_repaid = loan.amount_repaid.checked_add(payment).ok_or(ContractError::ArithmeticError)?;
 
     env.storage()
         .persistent()

@@ -341,3 +341,60 @@ pub fn register_borrower_if_needed(env: &Env, borrower: &Address) {
 pub fn primary_token(env: &Env) -> token::Client {
     token::Client::new(env, &config(env).token)
 }
+
+// ── Rate Limiting ─────────────────────────────────────────────────────────────
+
+pub fn check_rate_limit(env: &Env, account: &Address) -> Result<(), ContractError> {
+    let cfg = config(env);
+    if !cfg.rate_limit_config.enabled {
+        return Ok(());
+    }
+
+    let now = env.ledger().timestamp();
+    let (last_window_start, count): (u64, u32) = env
+        .storage()
+        .persistent()
+        .get(&DataKey::RateLimit(account.clone()))
+        .unwrap_or((0, 0));
+
+    if now < last_window_start + cfg.rate_limit_config.window_secs {
+        if count >= cfg.rate_limit_config.max_calls {
+            return Err(ContractError::RateLimitExceeded);
+        }
+        env.storage().persistent().set(
+            &DataKey::RateLimit(account.clone()),
+            &(last_window_start, count + 1),
+        );
+    } else {
+        env.storage()
+            .persistent()
+            .set(&DataKey::RateLimit(account.clone()), &(now, 1));
+    }
+
+    Ok(())
+}
+
+// ── Access Control ────────────────────────────────────────────────────────────
+
+pub fn check_permission(
+    env: &Env,
+    account: &Address,
+    permission_fn: fn(&crate::types::RolePermissions) -> bool,
+) -> Result<(), ContractError> {
+    // Admins always have all permissions
+    if is_admin(env, account) {
+        return Ok(());
+    }
+
+    let permissions: crate::types::RolePermissions = env
+        .storage()
+        .persistent()
+        .get(&DataKey::RolePermissions(account.clone()))
+        .ok_or(ContractError::PermissionDenied)?;
+
+    if permission_fn(&permissions) {
+        Ok(())
+    } else {
+        Err(ContractError::PermissionDenied)
+    }
+}

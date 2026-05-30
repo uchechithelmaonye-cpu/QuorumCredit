@@ -78,4 +78,12 @@ pub enum ContractError {
     SlashRecordNotFound = 57,
     /// Slash has already been reversed and cannot be reversed again.
     SlashAlreadyReversed = 58,
+    /// Caller has exceeded the configured rate limit.
+    RateLimitExceeded = 59,
+    /// Caller does not have the required role or permission.
+    PermissionDenied = 60,
+    /// Cryptographic proof validation failed.
+    InvalidProof = 61,
+    /// Arithmetic overflow or underflow occurred.
+    ArithmeticError = 62,
 }

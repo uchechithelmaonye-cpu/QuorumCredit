@@ -287,6 +287,7 @@ fn do_vouch(
     token: Address,
     chain_id: Option<u32>,
 ) -> Result<(), ContractError> {
+    crate::helpers::check_rate_limit(env, &voucher)?;
     crate::helpers::register_borrower_if_needed(env, &borrower);
     let (token_client, vouches) = validate_vouch(env, cfg, &voucher, &borrower, stake, &token, chain_id)?;
     commit_vouch(env, &token_client, voucher, borrower, stake, token, vouches, chain_id)
@@ -434,7 +435,7 @@ pub fn decrease_stake(
         vouches_mut.remove(idx);
     } else {
         let mut updated = vouch_rec.clone();
-        updated.stake -= amount;
+        updated.stake = updated.stake.checked_sub(amount).ok_or(ContractError::ArithmeticError)?;
         vouches_mut.set(idx, updated);
     }
 
@@ -584,21 +585,21 @@ pub fn partial_withdraw(
     }
 
     // Calculate max withdrawable: 50% of stake
-    let max_withdraw = vouch_rec.stake * PARTIAL_WITHDRAWAL_MAX_BPS / BPS_DENOMINATOR;
+    let max_withdraw = vouch_rec.stake.checked_mul(PARTIAL_WITHDRAWAL_MAX_BPS).ok_or(ContractError::ArithmeticError)? / BPS_DENOMINATOR;
     if max_withdraw <= 0 {
         return Err(ContractError::InsufficientFunds);
     }
 
     // Apply penalty: 10% of the withdrawn amount
-    let penalty = max_withdraw * PARTIAL_WITHDRAWAL_PENALTY_BPS / BPS_DENOMINATOR;
-    let net_payout = max_withdraw - penalty;
+    let penalty = max_withdraw.checked_mul(PARTIAL_WITHDRAWAL_PENALTY_BPS).ok_or(ContractError::ArithmeticError)? / BPS_DENOMINATOR;
+    let net_payout = max_withdraw.checked_sub(penalty).ok_or(ContractError::ArithmeticError)?;
 
     let token_client = require_allowed_token(&env, &vouch_rec.token)?;
     let contract = env.current_contract_address();
 
     // Reduce the voucher's stake by the withdrawn amount
     let mut updated = vouch_rec.clone();
-    updated.stake -= max_withdraw;
+    updated.stake = updated.stake.checked_sub(max_withdraw).ok_or(ContractError::ArithmeticError)?;
     vouches.set(idx, updated);
     env.storage()
         .persistent()

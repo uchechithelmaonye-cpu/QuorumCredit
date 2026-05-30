@@ -15,6 +15,7 @@ pub mod vouch;
 pub mod cache;
 pub mod error_response;
 pub mod versioning;
+pub mod proof_validator;
 
 pub use errors::ContractError;
 pub use types::*;

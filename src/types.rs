@@ -88,6 +88,12 @@ pub const DEFAULT_LOAN_SIZE_SLASH_MAX_BPS: i128 = 8_000;
 
 /// Default borrower repayment confirmation requirement (false = disabled by default).
 pub const DEFAULT_CONFIRMATION_REQUIRED: bool = false;
+
+/// Default rate limit: 10 calls per window.
+pub const DEFAULT_RATE_LIMIT_COUNT: u32 = 10;
+/// Default rate limit window: 60 seconds.
+pub const DEFAULT_RATE_LIMIT_WINDOW_SECS: u64 = 60;
+
 /// Timelock delay for decrease_stake during an active loan, in seconds (7 days).
 pub const DECREASE_STAKE_TIMELOCK: u64 = 7 * 24 * 60 * 60;
 
@@ -102,6 +108,35 @@ pub const DEFERMENT_PERIOD_SECS: u64 = 30 * 24 * 60 * 60;
 
 /// Penalty applied to partial mid-loan withdrawals, in basis points (1000 = 10%).
 pub const PARTIAL_WITHDRAWAL_PENALTY_BPS: i128 = 1_000;
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RateLimitConfig {
+    pub window_secs: u64,
+    pub max_calls: u32,
+    pub enabled: bool,
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum Role {
+    Admin,
+    Voucher,
+    Borrower,
+    Governance,
+    Oracle,
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RolePermissions {
+    pub role: Role,
+    pub can_vouch: bool,
+    pub can_request_loan: bool,
+    pub can_repay: bool,
+    pub can_slash: bool,
+    pub can_gov: bool,
+}
 
 /// Maximum fraction of stake that can be partially withdrawn during an active loan (50%).
 pub const PARTIAL_WITHDRAWAL_MAX_BPS: i128 = 5_000;
@@ -300,6 +335,8 @@ pub enum DataKey {
     AdminCompensation,
     /// Issue #686: last compensation claim timestamp per admin address
     AdminLastClaim(Address),
+    RolePermissions(Address), // address -> RolePermissions
+    RateLimit(Address),        // address -> (u64 last_call_window_start, u32 call_count)
 }
 
 // ── Governance ────────────────────────────────────────────────────────────────
@@ -406,6 +443,7 @@ pub struct Config {
     /// Designated successor admin address that can claim admin rights without multi-sig approval
     /// when current admins are unavailable.
     pub successor_admin: Option<Address>,
+    pub rate_limit_config: RateLimitConfig,
 }
 
 // ── Data Types ────────────────────────────────────────────────────────────────

@@ -111,9 +111,9 @@ pub fn vote_slash(
     }
 
     if approve {
-        vote.approve_stake += voucher_stake;
+        vote.approve_stake = vote.approve_stake.checked_add(voucher_stake).ok_or(ContractError::ArithmeticError)?;
     } else {
-        vote.reject_stake += voucher_stake;
+        vote.reject_stake = vote.reject_stake.checked_add(voucher_stake).ok_or(ContractError::ArithmeticError)?;
     }
     vote.voters.push_back(voucher.clone());
 
@@ -131,7 +131,9 @@ pub fn vote_slash(
 
     // Use ceiling division to prevent rounding down: (approve_stake * BPS_DENOMINATOR + total_stake - 1) / total_stake
     let quorum_reached = total_stake > 0
-        && (vote.approve_stake * BPS_DENOMINATOR + total_stake - 1) / total_stake
+        && (vote.approve_stake.checked_mul(BPS_DENOMINATOR).ok_or(ContractError::ArithmeticError)?
+            .checked_add(total_stake).ok_or(ContractError::ArithmeticError)?
+            .checked_sub(1).ok_or(ContractError::ArithmeticError)?) / total_stake
             >= quorum_bps as i128;
 
     if quorum_reached {
@@ -403,9 +405,9 @@ fn execute_slash(env: &Env, borrower: &Address) -> Result<(), ContractError> {
             remaining_vouches.push_back(v);
             continue;
         }
-        let slash_amount = v.stake * effective_slash_bps / BPS_DENOMINATOR;
-        let remaining = v.stake - slash_amount;
-        total_slashed += slash_amount;
+        let slash_amount = v.stake.checked_mul(effective_slash_bps).ok_or(ContractError::ArithmeticError)? / BPS_DENOMINATOR;
+        let remaining = v.stake.checked_sub(slash_amount).ok_or(ContractError::ArithmeticError)?;
+        total_slashed = total_slashed.checked_add(slash_amount).ok_or(ContractError::ArithmeticError)?;
 
         if remaining > 0 {
             loan_token.transfer(&env.current_contract_address(), &v.voucher, &remaining);

@@ -1290,3 +1290,26 @@ pub fn set_removal_vote_threshold(
         (admin_signers.get(0).unwrap(), threshold, env.ledger().timestamp()),
     );
 }
+
+pub fn set_rate_limit_config(
+    env: Env,
+    admin_signers: Vec<Address>,
+    rate_limit_config: crate::types::RateLimitConfig,
+) {
+    require_admin_approval(&env, &admin_signers);
+    let mut cfg = config(&env);
+    cfg.rate_limit_config = rate_limit_config;
+    env.storage().instance().set(&DataKey::Config, &cfg);
+}
+
+pub fn set_role_permissions(
+    env: Env,
+    admin_signers: Vec<Address>,
+    account: Address,
+    permissions: crate::types::RolePermissions,
+) {
+    require_admin_approval(&env, &admin_signers);
+    env.storage()
+        .persistent()
+        .set(&DataKey::RolePermissions(account), &permissions);
+}
