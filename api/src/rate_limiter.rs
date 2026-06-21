@@ -19,7 +19,10 @@ use tokio::sync::Mutex;
 pub enum Tier {
     Free,
     Pro,
-    Enterprise { requests_per_minute: u64, burst: u64 },
+    Enterprise {
+        requests_per_minute: u64,
+        burst: u64,
+    },
 }
 
 impl Tier {
@@ -27,7 +30,10 @@ impl Tier {
         match self {
             Tier::Free => 100,
             Tier::Pro => 1000,
-            Tier::Enterprise { requests_per_minute, .. } => *requests_per_minute,
+            Tier::Enterprise {
+                requests_per_minute,
+                ..
+            } => *requests_per_minute,
         }
     }
 
@@ -58,7 +64,10 @@ pub struct RateLimitConfig {
 
 impl RateLimitConfig {
     pub fn new(tier: Tier) -> Self {
-        Self { tier, endpoint_overrides: HashMap::new() }
+        Self {
+            tier,
+            endpoint_overrides: HashMap::new(),
+        }
     }
 
     pub fn with_endpoint_override(mut self, path: &str, limit: EndpointLimit) -> Self {
@@ -108,7 +117,9 @@ pub struct RedisStore {
 
 impl RedisStore {
     pub fn new(redis_url: &str) -> Result<Self, redis::RedisError> {
-        Ok(Self { client: redis::Client::open(redis_url)? })
+        Ok(Self {
+            client: redis::Client::open(redis_url)?,
+        })
     }
 }
 
@@ -180,9 +191,17 @@ impl RateLimitStore for RedisStore {
 
         let allowed = result[0] == 1;
         let remaining = result[1] as u64;
-        let reset_after_secs = (60u64.checked_div(refill_rate_per_minute.max(1)).unwrap_or(60)).max(1);
+        let reset_after_secs = (60u64
+            .checked_div(refill_rate_per_minute.max(1))
+            .unwrap_or(60))
+        .max(1);
 
-        Ok(RateLimitResult { allowed, limit: capacity, remaining, reset_after_secs })
+        Ok(RateLimitResult {
+            allowed,
+            limit: capacity,
+            remaining,
+            reset_after_secs,
+        })
     }
 }
 
@@ -201,7 +220,9 @@ pub struct InMemoryStore {
 
 impl InMemoryStore {
     pub fn new() -> Self {
-        Self { buckets: Mutex::new(HashMap::new()) }
+        Self {
+            buckets: Mutex::new(HashMap::new()),
+        }
     }
 }
 
@@ -234,9 +255,17 @@ impl RateLimitStore for InMemoryStore {
             state.tokens -= 1;
         }
         let remaining = state.tokens;
-        let reset_after_secs = (60u64.checked_div(refill_rate_per_minute.max(1)).unwrap_or(60)).max(1);
+        let reset_after_secs = (60u64
+            .checked_div(refill_rate_per_minute.max(1))
+            .unwrap_or(60))
+        .max(1);
 
-        Ok(RateLimitResult { allowed, limit: capacity, remaining, reset_after_secs })
+        Ok(RateLimitResult {
+            allowed,
+            limit: capacity,
+            remaining,
+            reset_after_secs,
+        })
     }
 }
 
@@ -338,7 +367,10 @@ mod tests {
     }
 
     fn enterprise_config(rpm: u64, burst: u64) -> RateLimitConfig {
-        RateLimitConfig::new(Tier::Enterprise { requests_per_minute: rpm, burst })
+        RateLimitConfig::new(Tier::Enterprise {
+            requests_per_minute: rpm,
+            burst,
+        })
     }
 
     fn limiter(config: RateLimitConfig) -> RateLimiter {
@@ -369,13 +401,19 @@ mod tests {
 
     #[test]
     fn test_enterprise_tier_custom_rpm() {
-        let tier = Tier::Enterprise { requests_per_minute: 5000, burst: 200 };
+        let tier = Tier::Enterprise {
+            requests_per_minute: 5000,
+            burst: 200,
+        };
         assert_eq!(tier.requests_per_minute(), 5000);
     }
 
     #[test]
     fn test_enterprise_tier_custom_burst() {
-        let tier = Tier::Enterprise { requests_per_minute: 5000, burst: 200 };
+        let tier = Tier::Enterprise {
+            requests_per_minute: 5000,
+            burst: 200,
+        };
         assert_eq!(tier.burst(), 200);
     }
 
@@ -385,7 +423,10 @@ mod tests {
     fn test_endpoint_override_applies() {
         let config = free_config().with_endpoint_override(
             "/heavy",
-            EndpointLimit { requests_per_minute: 5, burst: 2 },
+            EndpointLimit {
+                requests_per_minute: 5,
+                burst: 2,
+            },
         );
         let (rpm, burst) = config.limits_for("/heavy");
         assert_eq!(rpm, 5);
@@ -396,7 +437,10 @@ mod tests {
     fn test_default_limits_when_no_override() {
         let config = free_config().with_endpoint_override(
             "/heavy",
-            EndpointLimit { requests_per_minute: 5, burst: 2 },
+            EndpointLimit {
+                requests_per_minute: 5,
+                burst: 2,
+            },
         );
         let (rpm, burst) = config.limits_for("/light");
         assert_eq!(rpm, 100);
@@ -410,7 +454,11 @@ mod tests {
         let rl = limiter(free_config());
         for i in 0..10 {
             let r = rl.check_rate_limit("user1", "/api").await;
-            assert!(r.allowed, "request {} should be allowed within burst", i + 1);
+            assert!(
+                r.allowed,
+                "request {} should be allowed within burst",
+                i + 1
+            );
         }
     }
 
@@ -471,7 +519,12 @@ mod tests {
 
     #[async_trait]
     impl RateLimitStore for AlwaysFailStore {
-        async fn check_token_bucket(&self, _k: &str, cap: u64, _r: u64) -> Result<RateLimitResult, String> {
+        async fn check_token_bucket(
+            &self,
+            _k: &str,
+            cap: u64,
+            _r: u64,
+        ) -> Result<RateLimitResult, String> {
             Err("redis connection refused".to_string())
         }
     }
@@ -497,7 +550,10 @@ mod tests {
     async fn test_enterprise_endpoint_override_burst() {
         let config = enterprise_config(2000, 100).with_endpoint_override(
             "/sensitive",
-            EndpointLimit { requests_per_minute: 10, burst: 2 },
+            EndpointLimit {
+                requests_per_minute: 10,
+                burst: 2,
+            },
         );
         let rl = limiter(config);
         rl.check_rate_limit("admin", "/sensitive").await;
@@ -533,6 +589,9 @@ mod tests {
             rl.check_rate_limit("pro_user2", "/api").await;
         }
         let r = rl.check_rate_limit("pro_user2", "/api").await;
-        assert!(!r.allowed, "51st rapid request should be denied (pro burst=50)");
+        assert!(
+            !r.allowed,
+            "51st rapid request should be denied (pro burst=50)"
+        );
     }
 }

@@ -1,5 +1,4 @@
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 
 /// Voucher history event type
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -159,9 +158,7 @@ pub fn compute_activity_summary(records: &[VoucherHistoryRecord]) -> VoucherActi
 
 /// Format records as CSV with proper escaping
 pub fn records_to_csv(records: &[VoucherHistoryRecord]) -> String {
-    let mut out = String::from(
-        "date,type,borrower,amount_stroops,amount_xlm,tx_hash\n",
-    );
+    let mut out = String::from("date,type,borrower,amount_stroops,amount_xlm,tx_hash\n");
 
     for r in records {
         let date_str = chrono::DateTime::from_timestamp(r.timestamp, 0)
@@ -298,15 +295,13 @@ mod tests {
 
     #[test]
     fn test_records_to_csv_escaping() {
-        let records = vec![
-            VoucherHistoryRecord {
-                timestamp: 1000,
-                event_type: VoucherEventType::Vouch,
-                borrower: "addr,with,comma".to_string(),
-                amount_stroops: 1_000_000_000,
-                tx_hash: "hash\"with\"quote".to_string(),
-            },
-        ];
+        let records = vec![VoucherHistoryRecord {
+            timestamp: 1000,
+            event_type: VoucherEventType::Vouch,
+            borrower: "addr,with,comma".to_string(),
+            amount_stroops: 1_000_000_000,
+            tx_hash: "hash\"with\"quote".to_string(),
+        }];
         let csv = records_to_csv(&records);
         assert!(csv.contains("\"addr,with,comma\""));
         assert!(csv.contains("\"hash\"\"with\"\"quote\""));

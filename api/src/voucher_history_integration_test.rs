@@ -12,7 +12,7 @@ mod integration_tests {
 
         assert_eq!(page.total, 10);
         assert_eq!(page.records.len(), 10);
-        
+
         // Verify all records are present
         for record in &page.records {
             assert!(!record.tx_hash.is_empty());
@@ -23,20 +23,18 @@ mod integration_tests {
     /// (This would be enforced at the endpoint level via auth middleware)
     #[test]
     fn test_security_address_ownership() {
-        let owner = "voucher_owner";
-        let records = vec![
-            VoucherHistoryRecord {
-                timestamp: 1000,
-                event_type: VoucherEventType::Vouch,
-                borrower: "borrower_a".to_string(),
-                amount_stroops: 100_000_000,
-                tx_hash: "tx1".to_string(),
-            },
-        ];
+        let _owner = "voucher_owner";
+        let records = vec![VoucherHistoryRecord {
+            timestamp: 1000,
+            event_type: VoucherEventType::Vouch,
+            borrower: "borrower_a".to_string(),
+            amount_stroops: 100_000_000,
+            tx_hash: "tx1".to_string(),
+        }];
 
         let filter = VoucherHistoryFilter::default();
         let page = query_voucher_history(&records, &filter, 0, 100);
-        
+
         // Verify data is present (auth check happens at endpoint)
         assert_eq!(page.total, 1);
         assert_eq!(page.records[0].borrower, "borrower_a");
@@ -54,7 +52,11 @@ mod integration_tests {
 
         assert_eq!(page.total, 1000);
         assert_eq!(page.records.len(), 1000);
-        assert!(duration.as_secs_f64() < 2.0, "Export took {:.2}s, should be < 2s", duration.as_secs_f64());
+        assert!(
+            duration.as_secs_f64() < 2.0,
+            "Export took {:.2}s, should be < 2s",
+            duration.as_secs_f64()
+        );
     }
 
     /// Performance Test: CSV export formatting for 1000 records < 2 seconds
@@ -66,8 +68,12 @@ mod integration_tests {
         let csv = records_to_csv(&records);
         let duration = start.elapsed();
 
-        assert!(duration.as_secs_f64() < 2.0, "CSV export took {:.2}s", duration.as_secs_f64());
-        
+        assert!(
+            duration.as_secs_f64() < 2.0,
+            "CSV export took {:.2}s",
+            duration.as_secs_f64()
+        );
+
         // Verify CSV structure
         let lines: Vec<&str> = csv.lines().collect();
         assert_eq!(lines.len(), 1001); // header + 1000 records
@@ -118,7 +124,7 @@ mod integration_tests {
 
         assert_eq!(page.total, 0);
         assert_eq!(page.records.len(), 0);
-        
+
         let csv = records_to_csv(&records);
         let lines: Vec<&str> = csv.lines().collect();
         assert_eq!(lines.len(), 1); // Only header
@@ -145,7 +151,7 @@ mod integration_tests {
         ];
 
         let csv = records_to_csv(&records);
-        
+
         // Verify escaping
         assert!(csv.contains("\"addr,with,commas\""));
         assert!(csv.contains("\"tx\"\"with\"\"quotes\""));
@@ -161,10 +167,10 @@ mod integration_tests {
 
         // Simulate JSON export
         let json = serde_json::to_string(&page).expect("JSON serialization failed");
-        
+
         // Parse it back to verify valid JSON
         let parsed: serde_json::Value = serde_json::from_str(&json).expect("Invalid JSON");
-        
+
         assert!(parsed.is_object());
         assert!(parsed["records"].is_array());
         assert_eq!(parsed["records"].as_array().unwrap().len(), 5);
@@ -205,20 +211,45 @@ mod integration_tests {
 
         let page = query_voucher_history(&records, &filter, 0, 100);
         assert_eq!(page.total, 2);
-        assert!(page.records.iter().all(|r| 
-            r.event_type == VoucherEventType::Vouch || 
-            r.event_type == VoucherEventType::Slash
-        ));
+        assert!(page
+            .records
+            .iter()
+            .all(|r| r.event_type == VoucherEventType::Vouch
+                || r.event_type == VoucherEventType::Slash));
     }
 
     /// Test: Date range filtering
     #[test]
     fn test_filter_by_date_range() {
         let records = vec![
-            VoucherHistoryRecord { timestamp: 1000, event_type: VoucherEventType::Vouch, borrower: "b1".to_string(), amount_stroops: 100, tx_hash: "tx1".to_string() },
-            VoucherHistoryRecord { timestamp: 2000, event_type: VoucherEventType::Vouch, borrower: "b1".to_string(), amount_stroops: 100, tx_hash: "tx2".to_string() },
-            VoucherHistoryRecord { timestamp: 3000, event_type: VoucherEventType::Vouch, borrower: "b1".to_string(), amount_stroops: 100, tx_hash: "tx3".to_string() },
-            VoucherHistoryRecord { timestamp: 4000, event_type: VoucherEventType::Vouch, borrower: "b1".to_string(), amount_stroops: 100, tx_hash: "tx4".to_string() },
+            VoucherHistoryRecord {
+                timestamp: 1000,
+                event_type: VoucherEventType::Vouch,
+                borrower: "b1".to_string(),
+                amount_stroops: 100,
+                tx_hash: "tx1".to_string(),
+            },
+            VoucherHistoryRecord {
+                timestamp: 2000,
+                event_type: VoucherEventType::Vouch,
+                borrower: "b1".to_string(),
+                amount_stroops: 100,
+                tx_hash: "tx2".to_string(),
+            },
+            VoucherHistoryRecord {
+                timestamp: 3000,
+                event_type: VoucherEventType::Vouch,
+                borrower: "b1".to_string(),
+                amount_stroops: 100,
+                tx_hash: "tx3".to_string(),
+            },
+            VoucherHistoryRecord {
+                timestamp: 4000,
+                event_type: VoucherEventType::Vouch,
+                borrower: "b1".to_string(),
+                amount_stroops: 100,
+                tx_hash: "tx4".to_string(),
+            },
         ];
 
         let filter = VoucherHistoryFilter {
@@ -246,13 +277,15 @@ mod integration_tests {
         };
 
         let page = query_voucher_history(&records, &filter, 0, 100);
-        
+
         // Verify all results match filter criteria
         for record in &page.records {
             assert!(record.timestamp >= 1500 && record.timestamp <= 8000);
             assert_eq!(record.borrower, "borrower_0");
-            assert!(record.event_type == VoucherEventType::Vouch || 
-                    record.event_type == VoucherEventType::IncreaseStake);
+            assert!(
+                record.event_type == VoucherEventType::Vouch
+                    || record.event_type == VoucherEventType::IncreaseStake
+            );
         }
     }
 
@@ -260,14 +293,38 @@ mod integration_tests {
     #[test]
     fn test_activity_summary_calculation() {
         let records = vec![
-            VoucherHistoryRecord { timestamp: 1000, event_type: VoucherEventType::Vouch, borrower: "b1".to_string(), amount_stroops: 1000, tx_hash: "tx1".to_string() },
-            VoucherHistoryRecord { timestamp: 2000, event_type: VoucherEventType::IncreaseStake, borrower: "b1".to_string(), amount_stroops: 500, tx_hash: "tx2".to_string() },
-            VoucherHistoryRecord { timestamp: 3000, event_type: VoucherEventType::YieldEarned, borrower: "b1".to_string(), amount_stroops: 100, tx_hash: "tx3".to_string() },
-            VoucherHistoryRecord { timestamp: 4000, event_type: VoucherEventType::Slash, borrower: "b1".to_string(), amount_stroops: 250, tx_hash: "tx4".to_string() },
+            VoucherHistoryRecord {
+                timestamp: 1000,
+                event_type: VoucherEventType::Vouch,
+                borrower: "b1".to_string(),
+                amount_stroops: 1000,
+                tx_hash: "tx1".to_string(),
+            },
+            VoucherHistoryRecord {
+                timestamp: 2000,
+                event_type: VoucherEventType::IncreaseStake,
+                borrower: "b1".to_string(),
+                amount_stroops: 500,
+                tx_hash: "tx2".to_string(),
+            },
+            VoucherHistoryRecord {
+                timestamp: 3000,
+                event_type: VoucherEventType::YieldEarned,
+                borrower: "b1".to_string(),
+                amount_stroops: 100,
+                tx_hash: "tx3".to_string(),
+            },
+            VoucherHistoryRecord {
+                timestamp: 4000,
+                event_type: VoucherEventType::Slash,
+                borrower: "b1".to_string(),
+                amount_stroops: 250,
+                tx_hash: "tx4".to_string(),
+            },
         ];
 
         let summary = compute_activity_summary(&records);
-        
+
         assert_eq!(summary.total_staked, 1500);
         assert_eq!(summary.total_yield_earned, 100);
         assert_eq!(summary.total_slashed, 250);
@@ -280,7 +337,11 @@ mod integration_tests {
         (0..count)
             .map(|i| VoucherHistoryRecord {
                 timestamp: (i as i64) * 100 + 1000,
-                event_type: if i % 2 == 0 { VoucherEventType::Vouch } else { VoucherEventType::IncreaseStake },
+                event_type: if i % 2 == 0 {
+                    VoucherEventType::Vouch
+                } else {
+                    VoucherEventType::IncreaseStake
+                },
                 borrower: format!("borrower_{}", i % 3),
                 amount_stroops: (i as i128 + 1) * 1_000_000,
                 tx_hash: format!("tx_{:06}", i),
@@ -290,7 +351,7 @@ mod integration_tests {
 
     // Helper function to create varied test records
     fn create_test_records_varied(count: usize) -> Vec<VoucherHistoryRecord> {
-        let types = vec![
+        let types = [
             VoucherEventType::Vouch,
             VoucherEventType::IncreaseStake,
             VoucherEventType::DecreaseStake,

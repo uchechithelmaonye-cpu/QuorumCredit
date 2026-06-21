@@ -1,12 +1,12 @@
-use serde::{Deserialize, Serialize};
 use chrono::{DateTime, Utc};
-use uuid::Uuid;
-use std::sync::Arc;
-use tokio::sync::Mutex;
-use reqwest::Client;
-use thiserror::Error;
 use hmac::{Hmac, Mac};
+use reqwest::Client;
+use serde::{Deserialize, Serialize};
 use sha2::Sha256;
+use std::sync::Arc;
+use thiserror::Error;
+use tokio::sync::Mutex;
+use uuid::Uuid;
 
 #[derive(Error, Debug)]
 pub enum WebhookError {
@@ -121,7 +121,10 @@ impl WebhookManager {
     pub async fn deliver_event(&self, event: WebhookEvent) -> Result<(), WebhookError> {
         let subs = self.subscriptions.lock().await;
 
-        for sub in subs.iter().filter(|s| s.active && s.events.contains(&event.event_type)) {
+        for sub in subs
+            .iter()
+            .filter(|s| s.active && s.events.contains(&event.event_type))
+        {
             let delivery = WebhookDelivery {
                 id: Uuid::new_v4().to_string(),
                 webhook_id: sub.id.clone(),
@@ -138,7 +141,8 @@ impl WebhookManager {
             deliveries.push(delivery);
             drop(deliveries);
 
-            self.send_webhook(sub.clone(), event.clone(), delivery_id).await;
+            self.send_webhook(sub.clone(), event.clone(), delivery_id)
+                .await;
         }
 
         Ok(())
@@ -171,13 +175,8 @@ impl WebhookManager {
                         DeliveryStatus::Failed
                     };
 
-                    self.update_delivery(
-                        &delivery_id,
-                        delivery_status,
-                        Some(status_code),
-                        None,
-                    )
-                    .await;
+                    self.update_delivery(&delivery_id, delivery_status, Some(status_code), None)
+                        .await;
 
                     tracing::info!(
                         delivery_id = %delivery_id,
