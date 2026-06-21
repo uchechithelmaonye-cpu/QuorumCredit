@@ -2,6 +2,7 @@
 
 pub mod admin;
 mod contract;
+pub mod credit_score;
 pub mod errors;
 pub mod governance;
 pub mod helpers;
@@ -50,6 +51,8 @@ mod property_stake_loan_invariants_test;
 mod admin_whitelist_blacklist_test;
 #[cfg(test)]
 mod governance_queue_test;
+#[cfg(test)]
+mod credit_score_test;
 
 use crate::helpers::{
     config, get_active_loan_record, has_active_loan, loan_status as helper_loan_status,
@@ -1589,6 +1592,32 @@ impl QuorumCreditContract {
 
     pub fn get_governance_proposal_count(env: Env) -> u64 {
         admin::get_governance_proposal_count(env)
+    }
+
+    // ── On-Chain Credit Score with Tiered Rewards ───────────────────────────────
+
+    pub fn update_credit_score(env: Env, borrower: Address) -> Result<(), ContractError> {
+        credit_score::update_credit_score(env, borrower)
+    }
+
+    pub fn get_credit_score(env: Env, borrower: Address) -> Option<CreditScore> {
+        credit_score::get_credit_score(env, borrower)
+    }
+
+    pub fn set_credit_score_config(
+        env: Env,
+        admin_signers: Vec<Address>,
+        config: CreditScoreConfig,
+    ) -> Result<(), ContractError> {
+        credit_score::set_credit_score_config(env, admin_signers, config)
+    }
+
+    pub fn get_credit_score_config_view(env: Env) -> CreditScoreConfig {
+        credit_score::get_credit_score_config_view(env)
+    }
+
+    pub fn get_tier_rewards(env: Env, tier: CreditTier) -> TierRewards {
+        credit_score::get_tier_rewards(env, tier)
     }
 
     // ── Issue #683: emergency pause ───────────────────────────────────────────
