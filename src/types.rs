@@ -384,6 +384,10 @@ pub enum DataKey {
     GovernanceProposalCounter,
     /// Governance queue configuration
     GovernanceQueueConfig,
+    /// Credit score record for a borrower
+    CreditScore(Address),
+    /// Credit score configuration
+    CreditScoreConfig,
 }
 
 // ── Governance ────────────────────────────────────────────────────────────────
@@ -577,6 +581,161 @@ pub const DEFAULT_GOVERNANCE_TIMELOCK_DELAY: u64 = 24 * 60 * 60;
 
 /// Default execution window for governance proposals (7 days).
 pub const DEFAULT_GOVERNANCE_EXECUTION_WINDOW: u64 = 7 * 24 * 60 * 60;
+
+// ── On-Chain Credit Score with Tiered Rewards ─────────────────────────────────────
+
+/// Credit score tier levels.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum CreditTier {
+    /// Tier 1: Poor (0-349)
+    Poor,
+    /// Tier 2: Fair (350-549)
+    Fair,
+    /// Tier 3: Good (550-699)
+    Good,
+    /// Tier 4: Very Good (700-849)
+    VeryGood,
+    /// Tier 5: Excellent (850-1000)
+    Excellent,
+}
+
+/// Comprehensive credit score record for a borrower.
+#[contracttype]
+#[derive(Clone)]
+pub struct CreditScore {
+    /// Overall credit score (0-1000)
+    pub score: u32,
+    /// Current credit tier
+    pub tier: CreditTier,
+    /// Ledger timestamp when the score was last updated
+    pub last_updated: u64,
+    /// Total number of loans taken
+    pub total_loans: u32,
+    /// Number of successfully repaid loans
+    pub successful_repayments: u32,
+    /// Number of defaults
+    pub defaults: u32,
+    /// Total amount borrowed (in stroops)
+    pub total_borrowed: i128,
+    /// Total amount repaid (in stroops)
+    pub total_repaid: i128,
+    /// Account age in seconds
+    pub account_age: u64,
+    /// Number of times as a voucher
+    pub voucher_count: u32,
+    /// Average repayment time (in seconds before deadline, negative if late)
+    pub avg_repayment_time: i64,
+}
+
+/// Credit score calculation factors.
+#[contracttype]
+#[derive(Clone)]
+pub struct CreditFactors {
+    /// Weight for repayment history (0-10000 basis points)
+    pub repayment_history_weight: u32,
+    /// Weight for loan count (0-10000 basis points)
+    pub loan_count_weight: u32,
+    /// Weight for account age (0-10000 basis points)
+    pub account_age_weight: u32,
+    /// Weight for vouching activity (0-10000 basis points)
+    pub vouching_weight: u32,
+    /// Weight for repayment timeliness (0-10000 basis points)
+    pub timeliness_weight: u32,
+}
+
+/// Tiered reward benefits for each credit tier.
+#[contracttype]
+#[derive(Clone)]
+pub struct TierRewards {
+    /// Yield basis points bonus (added to base yield)
+    pub yield_bonus_bps: i32,
+    /// Maximum loan amount multiplier (e.g., 150 = 1.5x)
+    pub max_loan_multiplier: u32,
+    /// Minimum stake reduction in basis points (e.g., 1000 = 10% reduction)
+    pub min_stake_reduction_bps: u32,
+    /// Loan duration extension in seconds (e.g., 7 days = 604800)
+    pub duration_extension: u64,
+    /// Fee discount in basis points (e.g., 500 = 5% discount)
+    pub fee_discount_bps: u32,
+}
+
+/// Credit score configuration parameters.
+#[contracttype]
+#[derive(Clone)]
+pub struct CreditScoreConfig {
+    /// Whether credit scoring is enabled
+    pub enabled: bool,
+    /// Credit score calculation factors
+    pub factors: CreditFactors,
+    /// Rewards for each tier
+    pub poor_rewards: TierRewards,
+    pub fair_rewards: TierRewards,
+    pub good_rewards: TierRewards,
+    pub very_good_rewards: TierRewards,
+    pub excellent_rewards: TierRewards,
+}
+
+/// Default credit score factors.
+pub const DEFAULT_CREDIT_FACTORS: CreditFactors = CreditFactors {
+    repayment_history_weight: 4000,  // 40%
+    loan_count_weight: 1500,         // 15%
+    account_age_weight: 1000,         // 10%
+    vouching_weight: 1500,            // 15%
+    timeliness_weight: 2000,          // 20%
+};
+
+/// Default tier rewards configuration.
+pub const DEFAULT_POOR_REWARDS: TierRewards = TierRewards {
+    yield_bonus_bps: 0,
+    max_loan_multiplier: 100,
+    min_stake_reduction_bps: 0,
+    duration_extension: 0,
+    fee_discount_bps: 0,
+};
+
+pub const DEFAULT_FAIR_REWARDS: TierRewards = TierRewards {
+    yield_bonus_bps: 50,
+    max_loan_multiplier: 110,
+    min_stake_reduction_bps: 500,
+    duration_extension: 86400,      // 1 day
+    fee_discount_bps: 100,
+};
+
+pub const DEFAULT_GOOD_REWARDS: TierRewards = TierRewards {
+    yield_bonus_bps: 100,
+    max_loan_multiplier: 125,
+    min_stake_reduction_bps: 1000,
+    duration_extension: 172800,     // 2 days
+    fee_discount_bps: 250,
+};
+
+pub const DEFAULT_VERY_GOOD_REWARDS: TierRewards = TierRewards {
+    yield_bonus_bps: 150,
+    max_loan_multiplier: 150,
+    min_stake_reduction_bps: 1500,
+    duration_extension: 345600,     // 4 days
+    fee_discount_bps: 500,
+};
+
+pub const DEFAULT_EXCELLENT_REWARDS: TierRewards = TierRewards {
+    yield_bonus_bps: 200,
+    max_loan_multiplier: 200,
+    min_stake_reduction_bps: 2000,
+    duration_extension: 604800,     // 7 days
+    fee_discount_bps: 1000,
+};
+
+/// Default credit score configuration.
+pub const DEFAULT_CREDIT_SCORE_CONFIG: CreditScoreConfig = CreditScoreConfig {
+    enabled: true,
+    factors: DEFAULT_CREDIT_FACTORS,
+    poor_rewards: DEFAULT_POOR_REWARDS,
+    fair_rewards: DEFAULT_FAIR_REWARDS,
+    good_rewards: DEFAULT_GOOD_REWARDS,
+    very_good_rewards: DEFAULT_VERY_GOOD_REWARDS,
+    excellent_rewards: DEFAULT_EXCELLENT_REWARDS,
+};
 
 // ── Config ────────────────────────────────────────────────────────────────────
 

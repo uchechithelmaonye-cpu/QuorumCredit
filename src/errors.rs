@@ -112,4 +112,12 @@ pub enum ContractError {
     ExecutionWindowPassed = 110,
     /// Governance action is invalid or not supported.
     InvalidGovernanceAction = 111,
+    /// Credit score calculation failed.
+    CreditScoreCalculationFailed = 112,
+    /// Invalid credit score tier.
+    InvalidCreditTier = 113,
+    /// Credit score not found for borrower.
+    CreditScoreNotFound = 114,
+    /// Credit score configuration is invalid.
+    InvalidCreditConfig = 115,
 }
