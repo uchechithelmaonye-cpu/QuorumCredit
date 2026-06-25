@@ -824,6 +824,7 @@ mod tests {
         client.initialize(&deployer, &admins, &1, &token_id.address());
         (contract_id, token_id.address())
     }
+}
 
 // ── Internal helpers ──────────────────────────────────────────────────────────
 
@@ -848,37 +849,6 @@ fn queue_withdrawal_internal(
         }
     }
 
-        let (contract_id, token) = setup_contract(&env);
-        let client = QuorumCreditContractClient::new(&env, &contract_id);
-
-        let borrower = Address::generate(&env);
-
-        let voucher1 = Address::generate(&env);
-        let voucher2 = Address::generate(&env);
-
-        let mut vouches = Vec::new(&env);
-        vouches.push_back(VouchRecord {
-            voucher: voucher1,
-            stake: i128::MAX - 1000,
-            vouch_timestamp: 0,
-            token: token.clone(),
-        });
-        vouches.push_back(VouchRecord {
-            voucher: voucher2,
-            stake: 2000,
-            vouch_timestamp: 0,
-            token: token.clone(),
-        });
-
-        env.as_contract(&contract_id, || {
-            env.storage()
-                .persistent()
-                .set(&DataKey::Vouches(borrower.clone()), &vouches);
-        });
-
-        let result = client.try_total_vouched(&borrower);
-        assert_eq!(result, Err(Ok(ContractError::StakeOverflow)));
-    }
     queue.push_back(QueuedWithdrawal {
         voucher: voucher.clone(),
         token,
@@ -937,72 +907,278 @@ fn distribute_penalty(
 }
 
 pub fn transfer_vouch(
-    _env: Env,
-    _from: Address,
-    _to: Address,
-    _borrower: Address,
+    env: Env,
+    from: Address,
+    to: Address,
+    borrower: Address,
 ) -> Result<(), ContractError> {
-    Err(ContractError::InvalidStateTransition)
+    from.require_auth();
+    require_not_thawing(&env)?;
+
+    if from == to {
+        return Err(ContractError::InvalidStateTransition);
+    }
+
+    let mut vouches: Vec<VouchRecord> = env
+        .storage()
+        .persistent()
+        .get(&DataKey::Vouches(borrower.clone()))
+        .ok_or(ContractError::NoVouchesForBorrower)?;
+
+    let idx = vouches
+        .iter()
+        .position(|v| v.voucher == from)
+        .ok_or(ContractError::VoucherNotFound)? as u32;
+
+    let mut vouch_rec = vouches.get(idx).unwrap();
+
+    // Check if recipient already has a vouch for this borrower/token
+    let duplicate = vouches
+        .iter()
+        .any(|v| v.voucher == to && v.token == vouch_rec.token);
+    if duplicate {
+        return Err(ContractError::DuplicateVouch);
+    }
+
+    vouch_rec.voucher = to.clone();
+    vouch_rec.delegate = None;
+    vouches.set(idx, vouch_rec.clone());
+
+    env.storage()
+        .persistent()
+        .set(&DataKey::Vouches(borrower.clone()), &vouches);
+
+    // Log history for both parties
+    let timestamp = env.ledger().timestamp();
+    for (v, mod_type) in [(from.clone(), "transferred_out"), (to.clone(), "transferred_in")] {
+        let mut history: Vec<VouchHistoryEntry> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::VouchHistory(borrower.clone(), v.clone(), vouch_rec.token.clone()))
+            .unwrap_or(Vec::new(&env));
+        history.push_back(VouchHistoryEntry {
+            timestamp,
+            modification_type: soroban_sdk::String::from_str(&env, mod_type),
+            stake_amount: vouch_rec.stake,
+            delegate: None,
+        });
+        env.storage().persistent().set(
+            &DataKey::VouchHistory(borrower.clone(), v, vouch_rec.token.clone()),
+            &history,
+        );
+    }
+
+    env.events().publish(
+        (symbol_short!("vouch"), symbol_short!("transfer")),
+        (from, to, borrower, vouch_rec.stake),
+    );
+
+    Ok(())
 }
 
 pub fn delegate_vouch(
-    _env: Env,
-    _voucher: Address,
-    _borrower: Address,
-    _delegate: Address,
-    _token: Address,
+    env: Env,
+    voucher: Address,
+    borrower: Address,
+    delegate: Address,
+    token: Address,
 ) -> Result<(), ContractError> {
-    Err(ContractError::InvalidStateTransition)
+    voucher.require_auth();
+    require_not_thawing(&env)?;
+
+    if delegate == voucher {
+        return Err(ContractError::InvalidStateTransition);
+    }
+
+    let mut vouches: Vec<VouchRecord> = env
+        .storage()
+        .persistent()
+        .get(&DataKey::Vouches(borrower.clone()))
+        .ok_or(ContractError::NoVouchesForBorrower)?;
+
+    let idx = vouches
+        .iter()
+        .position(|v| v.voucher == voucher && v.token == token)
+        .ok_or(ContractError::VoucherNotFound)? as u32;
+
+    let mut vouch_rec = vouches.get(idx).unwrap();
+    vouch_rec.delegate = Some(delegate.clone());
+    vouches.set(idx, vouch_rec.clone());
+
+    env.storage()
+        .persistent()
+        .set(&DataKey::Vouches(borrower.clone()), &vouches);
+
+    // Store delegation lookup
+    env.storage().persistent().set(
+        &DataKey::VouchDelegation(borrower.clone(), voucher.clone(), token.clone()),
+        &delegate,
+    );
+
+    let timestamp = env.ledger().timestamp();
+    let mut vouch_history: Vec<VouchHistoryEntry> = env
+        .storage()
+        .persistent()
+        .get(&DataKey::VouchHistory(borrower.clone(), voucher.clone(), token.clone()))
+        .unwrap_or(Vec::new(&env));
+
+    vouch_history.push_back(VouchHistoryEntry {
+        timestamp,
+        modification_type: soroban_sdk::String::from_str(&env, "delegated"),
+        stake_amount: vouch_rec.stake,
+        delegate: Some(delegate),
+    });
+
+    env.storage().persistent().set(
+        &DataKey::VouchHistory(borrower.clone(), voucher.clone(), token.clone()),
+        &vouch_history,
+    );
+
+    env.events().publish(
+        (symbol_short!("vouch"), symbol_short!("delegate")),
+        (voucher, borrower, delegate),
+    );
+
+    Ok(())
 }
 
 pub fn revoke_delegation(
-    _env: Env,
-    _voucher: Address,
-    _borrower: Address,
-    _token: Address,
+    env: Env,
+    voucher: Address,
+    borrower: Address,
+    token: Address,
 ) -> Result<(), ContractError> {
-    Err(ContractError::InvalidStateTransition)
+    voucher.require_auth();
+    require_not_thawing(&env)?;
+
+    let mut vouches: Vec<VouchRecord> = env
+        .storage()
+        .persistent()
+        .get(&DataKey::Vouches(borrower.clone()))
+        .ok_or(ContractError::NoVouchesForBorrower)?;
+
+    let idx = vouches
+        .iter()
+        .position(|v| v.voucher == voucher && v.token == token)
+        .ok_or(ContractError::VoucherNotFound)? as u32;
+
+    let mut vouch_rec = vouches.get(idx).unwrap();
+
+    if vouch_rec.delegate.is_none() {
+        return Err(ContractError::InvalidStateTransition);
+    }
+
+    vouch_rec.delegate = None;
+    vouches.set(idx, vouch_rec.clone());
+
+    env.storage()
+        .persistent()
+        .set(&DataKey::Vouches(borrower.clone()), &vouches);
+
+    // Remove delegation lookup
+    env.storage().persistent().remove(&DataKey::VouchDelegation(
+        borrower.clone(),
+        voucher.clone(),
+        token.clone(),
+    ));
+
+    let timestamp = env.ledger().timestamp();
+    let mut vouch_history: Vec<VouchHistoryEntry> = env
+        .storage()
+        .persistent()
+        .get(&DataKey::VouchHistory(borrower.clone(), voucher.clone(), token.clone()))
+        .unwrap_or(Vec::new(&env));
+
+    vouch_history.push_back(VouchHistoryEntry {
+        timestamp,
+        modification_type: soroban_sdk::String::from_str(&env, "delegation_revoked"),
+        stake_amount: vouch_rec.stake,
+        delegate: None,
+    });
+
+    env.storage().persistent().set(
+        &DataKey::VouchHistory(borrower.clone(), voucher.clone(), token.clone()),
+        &vouch_history,
+    );
+
+    env.events().publish(
+        (symbol_short!("vouch"), symbol_short!("revoke_del")),
+        (voucher, borrower),
+    );
+
+    Ok(())
 }
 
-        let (contract_id, token) = setup_contract(&env);
-        let client = QuorumCreditContractClient::new(&env, &contract_id);
-
-        let borrower = Address::generate(&env);
-
-        let voucher1 = Address::generate(&env);
-        let voucher2 = Address::generate(&env);
-
-        let mut vouches = Vec::new(&env);
-        vouches.push_back(VouchRecord {
-            voucher: voucher1,
-            stake: 1_000_000,
-            vouch_timestamp: 0,
-            token: token.clone(),
-        });
-        vouches.push_back(VouchRecord {
-            voucher: voucher2,
-            stake: 2_500_000,
-            vouch_timestamp: 0,
-            token: token.clone(),
-        });
-
-        env.as_contract(&contract_id, || {
-            env.storage()
-                .persistent()
-                .set(&DataKey::Vouches(borrower.clone()), &vouches);
-        });
-
-        let result = client.total_vouched(&borrower);
-        assert_eq!(result, 3_500_000);
-    }
 pub fn set_vouch_expiry(
-    _env: Env,
-    _voucher: Address,
-    _borrower: Address,
-    _expiry: u64,
-    _token: Address,
+    env: Env,
+    voucher: Address,
+    borrower: Address,
+    expiry: u64,
+    token: Address,
 ) -> Result<(), ContractError> {
-    Err(ContractError::InvalidStateTransition)
+    voucher.require_auth();
+    require_not_thawing(&env)?;
+
+    let mut vouches: Vec<VouchRecord> = env
+        .storage()
+        .persistent()
+        .get(&DataKey::Vouches(borrower.clone()))
+        .ok_or(ContractError::NoVouchesForBorrower)?;
+
+    let idx = vouches
+        .iter()
+        .position(|v| v.voucher == voucher && v.token == token)
+        .ok_or(ContractError::VoucherNotFound)? as u32;
+
+    let mut vouch_rec = vouches.get(idx).unwrap();
+    let now = env.ledger().timestamp();
+
+    if expiry > 0 && expiry <= now {
+        return Err(ContractError::InvalidAmount);
+    }
+
+    let new_expiry = if expiry > 0 { Some(expiry) } else { None };
+    vouch_rec.expiry_timestamp = new_expiry;
+    vouches.set(idx, vouch_rec.clone());
+
+    env.storage()
+        .persistent()
+        .set(&DataKey::Vouches(borrower.clone()), &vouches);
+
+    let modification_type = if expiry > 0 {
+        "expiry_set"
+    } else {
+        "expiry_cleared"
+    };
+
+    let mut vouch_history: Vec<VouchHistoryEntry> = env
+        .storage()
+        .persistent()
+        .get(&DataKey::VouchHistory(
+            borrower.clone(),
+            voucher.clone(),
+            token.clone(),
+        ))
+        .unwrap_or(Vec::new(&env));
+
+    vouch_history.push_back(VouchHistoryEntry {
+        timestamp: now,
+        modification_type: soroban_sdk::String::from_str(&env, modification_type),
+        stake_amount: vouch_rec.stake,
+        delegate: None,
+    });
+
+    env.storage().persistent().set(
+        &DataKey::VouchHistory(borrower.clone(), voucher.clone(), token.clone()),
+        &vouch_history,
+    );
+
+    env.events().publish(
+        (symbol_short!("vouch"), symbol_short!("expiry")),
+        (voucher, borrower, expiry),
+    );
+
+    Ok(())
 }
 
 pub fn get_vouch_history(
